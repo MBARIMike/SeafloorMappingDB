@@ -187,6 +187,7 @@ class Mission(models.Model):
     track_length = models.DecimalField(
         max_digits=8, decimal_places=3, blank=True, null=True
     )
+    area = models.FloatField(blank=True, null=True)
     expedition = models.ForeignKey(
         Expedition, on_delete=models.CASCADE, blank=True, null=True
     )
@@ -219,7 +220,7 @@ class Mission(models.Model):
     patch_test = models.BooleanField(blank=True, null=True)
     # patch tests sometimes are included in larger mapping surveys, so should be a boolean rather than a missiontype
     comment = models.TextField(blank=True, null=True)
-    directory = models.CharField(max_length=256, null=True)
+    directory = models.CharField(max_length=256, blank=True, null=True)
     notes_filename = models.CharField(
         max_length=256, db_index=True, blank=True, null=True
     )
