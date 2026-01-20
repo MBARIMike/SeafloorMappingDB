@@ -19,6 +19,9 @@ class DivWrappedColumn(Column):
 class MissionTable(Table):
     name = Column(linkify=True)
     expedition = Column(linkify=True)
+    track_length = Column(verbose_name="Track length (km)")
+    area = Column(verbose_name="Area (km²)")
+    start_depth = Column(verbose_name="Start depth (m)")
 
     class Meta:
         model = Mission
@@ -27,6 +30,7 @@ class MissionTable(Table):
             "start_date",
             "region_name",
             "track_length",
+            "area",
             "start_depth",
             "vehicle_name",
             "quality_categories",
@@ -40,6 +44,7 @@ class MissionTable(Table):
             "start_date",
             "region_name",
             "track_length",
+            "area",
             "start_depth",
             "vehicle_name",
             "quality_categories",
@@ -49,6 +54,11 @@ class MissionTable(Table):
             "mgds_compilation",
             "expedition",
         )
+
+    def render_area(self, value):
+        if value is not None:
+            return f"{value:.4f}"
+        return ""
 
     def render_mgds_compilation(self, value):
         if value:

@@ -78,6 +78,7 @@ class MissionAdmin(GeoModelAdmin):
         "start_date",
         "end_date",
         "track_length",
+        "area",
         "nav_track",
         "start_depth",
         "comment",
@@ -94,7 +95,7 @@ class MissionAdmin(GeoModelAdmin):
         "kml_filename",
         "quality_categories",
     ]
-    readonly_fields = ["image_tag"]
+    readonly_fields = ["image_tag", "area"]
     prepopulated_fields = {"slug": ("name",)}
 
 

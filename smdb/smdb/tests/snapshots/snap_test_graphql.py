@@ -841,6 +841,7 @@ snapshots['test_create_mission 1'] = {
     'data': {
         'create_mission': {
             'mission': {
+                'area': 12.3456,
                 'citations': [
                     {
                         'doi': 'doi://c_initial/1',
@@ -916,7 +917,7 @@ snapshots['test_create_mission 1'] = {
                 ],
                 'site_detail': 'site detail',
                 'start_date': '2021-03-03T00:00:00',
-                'start_depth': 1500.0,
+                'start_depth': None,
                 'start_point': {
                     'coordinates': [
                         -121.893,
@@ -925,11 +926,41 @@ snapshots['test_create_mission 1'] = {
                     'type': 'Point'
                 },
                 'thumbnail_filename': 'thumbnail.png',
-                'track_length': 24.1,
+                'track_length': None,
                 'update_status': 5
             }
         }
-    }
+    },
+    'errors': [
+        {
+            'locations': [
+                {
+                    'column': 17,
+                    'line': 47
+                }
+            ],
+            'message': 'Received not compatible Decimal "1500.0"',
+            'path': [
+                'create_mission',
+                'mission',
+                'start_depth'
+            ]
+        },
+        {
+            'locations': [
+                {
+                    'column': 17,
+                    'line': 49
+                }
+            ],
+            'message': 'Received not compatible Decimal "24.1"',
+            'path': [
+                'create_mission',
+                'mission',
+                'track_length'
+            ]
+        }
+    ]
 }
 
 snapshots['test_create_missiontype 1'] = {
@@ -1431,6 +1462,7 @@ snapshots['test_update_mission 1'] = {
     'data': {
         'update_mission': {
             'mission': {
+                'area': 23.4567,
                 'citations': [
                     {
                         'doi': 'doi://c_updated/1',
@@ -1493,7 +1525,6 @@ snapshots['test_update_mission 1'] = {
                 'platform': {
                     'name': 'Added platform'
                 },
-                'quality_comment': 'R',
                 'region_name': 'region2',
                 'repeat_survey': True,
                 'sensors': [
@@ -1506,7 +1537,7 @@ snapshots['test_update_mission 1'] = {
                 ],
                 'site_detail': 'site detail 2',
                 'start_date': '2021-05-05T00:00:00',
-                'start_depth': 1700.0,
+                'start_depth': None,
                 'start_point': {
                     'coordinates': [
                         -121.993,
@@ -1515,11 +1546,41 @@ snapshots['test_update_mission 1'] = {
                     'type': 'Point'
                 },
                 'thumbnail_filename': 'tumbnail2.png',
-                'track_length': 24.2,
+                'track_length': None,
                 'update_status': 6
             }
         }
-    }
+    },
+    'errors': [
+        {
+            'locations': [
+                {
+                    'column': 25,
+                    'line': 46
+                }
+            ],
+            'message': 'Received not compatible Decimal "1700.0"',
+            'path': [
+                'update_mission',
+                'mission',
+                'start_depth'
+            ]
+        },
+        {
+            'locations': [
+                {
+                    'column': 25,
+                    'line': 48
+                }
+            ],
+            'message': 'Received not compatible Decimal "24.2"',
+            'path': [
+                'update_mission',
+                'mission',
+                'track_length'
+            ]
+        }
+    ]
 }
 
 snapshots['test_update_missiontype 1'] = {

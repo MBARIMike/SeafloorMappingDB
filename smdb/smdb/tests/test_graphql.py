@@ -1083,6 +1083,7 @@ create_mission_template = Template(
             start_depth: 1500,
             start_point: "SRID=4326;POINT (-121.893 36.775)",
             track_length: 24.1,
+            area: 12.3456,
             quality_comment: "Q",
             repeat_survey: false,
             comment: "Initial comment.",
@@ -1119,6 +1120,7 @@ create_mission_template = Template(
                 start_depth
                 start_point
                 track_length
+                area
                 quality_comment
                 repeat_survey
                 comment
@@ -1216,6 +1218,7 @@ def test_update_mission(snapshot):
                     start_depth: 1700,
                     start_point: "SRID=4326;POINT (-121.993 36.875)",
                     track_length: 24.2,
+                    area: 23.4567,
                     quality_comment: "R",
                     repeat_survey: true,
                     comment: "Updates comment.",
@@ -1251,7 +1254,7 @@ def test_update_mission(snapshot):
                         start_depth
                         start_point
                         track_length
-                        quality_comment
+                        area
                         repeat_survey
                         comment
                         directory

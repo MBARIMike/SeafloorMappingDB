@@ -342,6 +342,107 @@ class BaseLoader:
 
         return grid_bounds
 
+    def calculate_grid_area(self, ds, grid_bounds: Polygon) -> float:
+        """Calculate area in square kilometers for valid (non-NaN) grid cells.
+        Reads the actual grid data and counts only cells with valid values.
+        """
+        import numpy as np
+
+        # Get coordinate arrays
+        if "x" in ds.variables and "y" in ds.variables:
+            X, Y = "x", "y"
+        elif "lon" in ds.variables and "lat" in ds.variables:
+            X, Y = "lon", "lat"
+        else:
+            raise ValueError("Cannot find coordinate variables")
+
+        lon = ds[X][:]
+        lat = ds[Y][:]
+
+        # Get the grid data - try common variable names
+        z_var = None
+        for var_name in ["z", "altitude", "elevation", "depth", "Band1"]:
+            if var_name in ds.variables:
+                z_var = ds.variables[var_name]
+                break
+
+        if z_var is None:
+            self.logger.warning("Could not find data variable in grid file")
+            return None
+
+        # Get the data and identify valid cells
+        z_data = z_var[:]
+
+        # Mask NaN and fill values
+        if hasattr(z_data, "mask"):
+            valid_mask = ~z_data.mask
+        else:
+            valid_mask = ~np.isnan(z_data)
+
+        # Also check for fill values
+        if hasattr(z_var, "_FillValue"):
+            valid_mask &= z_data != z_var._FillValue
+
+        valid_count = np.sum(valid_mask)
+        total_count = z_data.size
+
+        self.logger.debug(
+            "Grid has %d valid cells out of %d total cells (%.1f%%)",
+            valid_count,
+            total_count,
+            100 * valid_count / total_count,
+        )
+
+        # Calculate cell resolution (assuming uniform spacing)
+        dlon = float(np.abs(lon[1] - lon[0]))
+        dlat = float(np.abs(lat[1] - lat[0]))
+
+        # Find appropriate UTM zone for accurate area calculation
+        centroid = grid_bounds.centroid
+        utm_zone = int((centroid.x + 180) / 6) + 1
+        hemisphere = "north" if centroid.y >= 0 else "south"
+        utm_srid = 32600 + utm_zone if hemisphere == "north" else 32700 + utm_zone
+
+        # Calculate area of a single cell in the middle of the grid
+        # (cells vary slightly in size with latitude, but this is close enough)
+        mid_lat = float(np.mean(lat))
+        mid_lon = float(np.mean(lon))
+
+        # Create a cell polygon in geographic coordinates
+        cell_poly = Polygon(
+            [
+                (mid_lon, mid_lat),
+                (mid_lon + dlon, mid_lat),
+                (mid_lon + dlon, mid_lat + dlat),
+                (mid_lon, mid_lat + dlat),
+                (mid_lon, mid_lat),
+            ],
+            srid=4326,
+        )
+
+        # Transform to UTM and get area in m²
+        cell_poly_utm = cell_poly.transform(utm_srid, clone=True)
+        cell_area_m2 = cell_poly_utm.area
+
+        # Total area is valid cell count × cell area
+        area_m2 = valid_count * cell_area_m2
+        area_km2 = area_m2 / 1_000_000
+
+        self.logger.info(
+            "Calculated area: %.4f km² (%.3f m²) from %d valid cells, "
+            "cell size: %.6f m² (%.6f×%.6f degrees at UTM zone %d%s)",
+            area_km2,
+            area_m2,
+            valid_count,
+            cell_area_m2,
+            dlon,
+            dlat,
+            utm_zone,
+            hemisphere[0].upper(),
+        )
+
+        return area_km2
+
     def save_thumbnail(self, mission, scale_factor=8):
         # Factored out of BootStrapper() to be used also by Compiler()
         # (mission may also be a compilation object)
@@ -1236,6 +1337,13 @@ class BootStrapper(BaseLoader):
                 notes_filename = self.notes_filename(os.path.dirname(fp))
                 thumbnail_filename = self.thumbnail_filename(os.path.dirname(fp))
 
+                # Calculate area in square kilometers
+                try:
+                    area_km2 = self.calculate_grid_area(ds, grid_bounds)
+                except Exception as e:
+                    self.logger.warning("Could not calculate area: %s", e)
+                    area_km2 = None
+
                 mission, created = Mission.objects.get_or_create(
                     name=os.path.dirname(fp).replace(MBARI_DIR, ""),
                     grid_bounds=grid_bounds,
@@ -1243,6 +1351,9 @@ class BootStrapper(BaseLoader):
                     thumbnail_filename=thumbnail_filename,
                     directory=os.path.dirname(fp),
                 )
+                if area_km2 is not None:
+                    mission.area = area_km2
+                    mission.save()
                 miss_loaded += 1
                 try:
                     self.save_note_todb(mission)
@@ -1536,7 +1647,7 @@ class Compiler(BaseLoader):
 
 
 # The columns in the .xlsx file are (as of 23 May 2024):
-# Mission	Route	Location	Vehicle	Quality_category*	Patch_test	Repeat_survey	Quality_comment	Trackline_km	MGDS_compilation
+# Mission	Route	Location	Vehicle	Quality_category*	Patch_test	Repeat_survey	Quality_comment	Trackline_km	Area_km2	MGDS_compilation
 # Dictionary below: key is field name in Mission model, value is column name in .xlsx file
 col_lookup = {
     "name": "Mission",
@@ -1548,6 +1659,7 @@ col_lookup = {
     "repeat_survey": "Repeat_survey",
     "quality_comment": "Quality_comment",
     "track_length": "Trackline_km",
+    "area": "Area_km2",
     "mgds_compilation": "MGDS_compilation",
 }
 
@@ -1629,6 +1741,7 @@ class SurveyTally(BaseLoader):
                 if row["Repeat_survey"]:
                     mission.repeat_survey = True
                 # mission.track_length = row["Trackline_km"]  # Do not update database with this field
+                # mission.area = row["Area_km2"]  # Do not update database with this field
                 mission.mgds_compilation = row["MGDS_compilation"]
                 mission.save()
                 saved_count += 1
@@ -1714,8 +1827,15 @@ class SurveyTally(BaseLoader):
             for col in col_lookup.keys():
                 if col == "name":
                     item = getattr(mission, col).replace(f"{parent_dir}/", "")
-                if col == "quality_categories":
+                elif col == "quality_categories":
                     item = " ".join([s.name for s in mission.quality_categories.all()])
+                elif col == "area":
+                    # Format area with 4 decimal places
+                    if hasattr(mission, col):
+                        area_value = getattr(mission, col, None)
+                        item = f"{area_value:.4f}" if area_value is not None else ""
+                    else:
+                        item = ""
                 else:
                     if hasattr(mission, col):
                         item = getattr(mission, col, "") or ""
@@ -1837,17 +1957,17 @@ def run(*args):
     bl.process_command_line()
     bl.logger.debug("Arguments passed to run(): %s", " ".join(args))
     if bl.args.bootstrap and bl.args.notes and bl.args.fnv:
-        exclude_file_load()
-        missions_saved = bootstrap_load()
+        exclude_paths = exclude_file_load()
+        missions_saved = bootstrap_load(exclude_paths)
         notes_load(missions_saved)
         fnv_load(missions_saved)
     elif bl.args.bootstrap and bl.args.notes:
-        exclude_file_load()
-        missions_saved = bootstrap_load()
+        exclude_paths = exclude_file_load()
+        missions_saved = bootstrap_load(exclude_paths)
         notes_load(missions_saved)
     elif bl.args.bootstrap:
-        exclude_file_load()
-        missions_saved = bootstrap_load()
+        exclude_paths = exclude_file_load()
+        missions_saved = bootstrap_load(exclude_paths)
     elif bl.args.notes:
         notes_load(missions_saved)
     elif bl.args.mbinfo:

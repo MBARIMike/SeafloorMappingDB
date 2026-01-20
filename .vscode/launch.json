@@ -69,7 +69,7 @@
       //"args": ["--fnv", "-v", "2", "--limit", "2", "--skipuntil", "2022/20220205m1"]
       //"args": ["--fnv", "-v", "2", "--limit", "2", "--skipuntil", "2020/20200804m1"]
       //"args": ["--fnv", "-v", "2", "--limit", "2", "--skipuntil", "2023/20230310m1"]
-      "args": ["--fnv", "-v", "2", "--limit", "2", "--skipuntil", "swathdata/surveys/NOAA/AHI-06-05"]
+      //"args": ["--fnv", "-v", "2", "--limit", "2", "--skipuntil", "swathdata/surveys/NOAA/AHI-06-05"]
       //"args": ["--fnv", "-v", "2"],
       //"args": [ "--compilation", "-v", "1", "--skipuntil", "swathdata/surveys/UH/kok0714", "--log_file", "compilation.txt" ],
       // Supporting Compilation load testing, first mission found in --compilation: 2019/20190627d1/multibeam
@@ -87,7 +87,9 @@
       //"args": ["--spreadsheets", "-v", "1"],
       //"args": ["-v", "2", "--last_n_days", "0.5"],
       //"args": ["-v", "1", "--spreadsheets", "--parent_dir", "2024", "--append_to_log_file"],
-      //"args": ["-v", "1", "--spreadsheets"],
+      "args": ["-v", "1", "--spreadsheets"],
       //"args": ["-v", "1", "--compilation", "--last_n_days", "30"],
-      "justMyCode": false
+      "justMyCode": false,
+      //"args": [ "-v", "2", "--skipuntil_regex", "--regex", "Packard/2025/DP2025_01/RogueCanyonLeg1/ZTopo.grd$", "--limit", "1", "--noinput" ],
+      //"args": [ "-v", "1", "--bootstrap", "--skipuntil_regex", "--regex", "20250824m2/ZTopo.grd$", "--limit", "12", "--noinput", "--clobber" ],
     }
