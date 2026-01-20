@@ -309,7 +309,7 @@ class CompilationDetailView(SuccessMessageMixin, DetailView):
 
         table = MissionTable(
             Mission.objects.filter(compilations=compilation),
-            exclude=["track_length", "start_depth"],
+            exclude=["track_length", "area", "start_depth"],
             order_by="-start_date",
         )
         RequestConfig(self.request).configure(table)

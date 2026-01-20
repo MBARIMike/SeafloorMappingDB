@@ -36,6 +36,10 @@
         {{ mission.track_length|default_if_none:"" }} km
       </div>
       <div>
+        <span class="font-weight-bold">Area:</span>
+        {% if mission.area %}{{ mission.area|floatformat:4 }} km²{% endif %}
+      </div>
+      <div>
         <span class="font-weight-bold">Route file:</span>
         {{ mission.route_file|default_if_none:"" }}
       </div>
