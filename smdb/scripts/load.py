@@ -1829,6 +1829,13 @@ class SurveyTally(BaseLoader):
                     item = getattr(mission, col).replace(f"{parent_dir}/", "")
                 elif col == "quality_categories":
                     item = " ".join([s.name for s in mission.quality_categories.all()])
+                elif col == "area":
+                    # Format area with 4 decimal places
+                    if hasattr(mission, col):
+                        area_value = getattr(mission, col, None)
+                        item = f"{area_value:.4f}" if area_value is not None else ""
+                    else:
+                        item = ""
                 else:
                     if hasattr(mission, col):
                         item = getattr(mission, col, "") or ""
