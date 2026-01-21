@@ -100,6 +100,7 @@ class BaseLoader:
         self.commandline = None
         self.exclude_paths = set()
         self.start_proc = datetime.now()
+        self._grid_area_cache = {}  # Cache grid area calculations
 
     def process_command_line(self):
         parser = argparse.ArgumentParser(
@@ -342,71 +343,186 @@ class BaseLoader:
 
         return grid_bounds
 
-    def calculate_grid_area(self, ds, grid_bounds: Polygon) -> float:
+    def calculate_grid_area(self, ds, grid_bounds: Polygon, filepath: str = None) -> float:
         """Calculate area in square kilometers for valid (non-NaN) grid cells.
-        Reads the actual grid data and counts only cells with valid values.
-        Uses chunked processing to avoid loading entire dataset into memory.
+        Uses sampling for large grids (>10M cells) for speed.
+        Falls back to full count for smaller grids.
+        Caches results by file path and modification time.
+        
+        Args:
+            ds: netCDF4.Dataset object (used for fallback if xarray fails)
+            grid_bounds: Polygon defining the grid boundaries
+            filepath: Optional file path for direct xarray opening (preferred)
         """
         import numpy as np
+        
+        # Check cache first (using filepath and mtime as key)
+        if filepath and os.path.exists(filepath):
+            file_mtime = os.path.getmtime(filepath)
+            cache_key = (filepath, file_mtime)
+            if cache_key in self._grid_area_cache:
+                self.logger.debug("Using cached area for %s", filepath)
+                return self._grid_area_cache[cache_key]
+        
+        # Try to use xarray with direct file opening if filepath provided
+        try:
+            import xarray as xr
+            if filepath:
+                # Open directly without chunks - faster for metadata access
+                ds_xr = xr.open_dataset(filepath)
+                use_xarray = True
+            elif isinstance(ds, xr.Dataset):
+                ds_xr = ds
+                use_xarray = True
+            else:
+                # Fall back to manual chunking for netCDF4.Dataset objects
+                use_xarray = False
+                self.logger.debug("Using manual chunking for netCDF4.Dataset")
+        except (ImportError, Exception) as e:
+            # xarray not available or failed, fall back to manual chunking
+            use_xarray = False
+            self.logger.debug(f"Using manual chunking: {e}")
 
         # Get coordinate arrays
-        if "x" in ds.variables and "y" in ds.variables:
-            X, Y = "x", "y"
-        elif "lon" in ds.variables and "lat" in ds.variables:
-            X, Y = "lon", "lat"
-        else:
-            raise ValueError("Cannot find coordinate variables")
-
-        # Only load coordinate endpoints and middle value for calculations
-        lon_size = len(ds[X])
-        lat_size = len(ds[Y])
-        lon_start = float(ds[X][0])
-        lon_end = float(ds[X][-1])
-        lat_start = float(ds[Y][0])
-        lat_end = float(ds[Y][-1])
-        lon_mid = float(ds[X][lon_size // 2])
-        lat_mid = float(ds[Y][lat_size // 2])
-
-        # Get the grid data - try common variable names
-        z_var = None
-        for var_name in ["z", "altitude", "elevation", "depth", "Band1"]:
-            if var_name in ds.variables:
-                z_var = ds.variables[var_name]
-                break
-
-        if z_var is None:
-            self.logger.warning("Could not find data variable in grid file")
-            return None
-
-        # Process data in chunks to avoid loading everything into memory
-        chunk_size = 1000  # Process 1000 rows at a time
-        valid_count = 0
-        total_count = z_var.shape[0] * z_var.shape[1]
-
-        fill_value = getattr(z_var, "_FillValue", None)
-
-        # Iterate over chunks
-        for i in range(0, z_var.shape[0], chunk_size):
-            end_i = min(i + chunk_size, z_var.shape[0])
-            chunk = z_var[i:end_i, :]
-
-            # Count valid cells in this chunk
-            if hasattr(chunk, "mask"):
-                # Masked array
-                valid_in_chunk = np.sum(~chunk.mask)
+        if use_xarray:
+            if "x" in ds_xr.coords and "y" in ds_xr.coords:
+                X, Y = "x", "y"
+            elif "lon" in ds_xr.coords and "lat" in ds_xr.coords:
+                X, Y = "lon", "lat"
             else:
-                # Regular array - check for NaN
-                valid_in_chunk = np.sum(~np.isnan(chunk))
+                raise ValueError("Cannot find coordinate variables")
 
-            # Also check for fill values if present
-            if fill_value is not None:
-                if hasattr(chunk, "mask"):
-                    # For masked arrays, also exclude fill values in unmasked data
-                    valid_in_chunk -= np.sum((~chunk.mask) & (chunk.data == fill_value))
+            # Only load coordinate endpoints and middle value for calculations
+            lon_size = len(ds_xr[X])
+            lat_size = len(ds_xr[Y])
+            lon_start = float(ds_xr[X][0].values)
+            lon_end = float(ds_xr[X][-1].values)
+            lat_start = float(ds_xr[Y][0].values)
+            lat_end = float(ds_xr[Y][-1].values)
+            lon_mid = float(ds_xr[X][lon_size // 2].values)
+            lat_mid = float(ds_xr[Y][lat_size // 2].values)
+
+            # Get the grid data - try common variable names
+            z_var_name = None
+            for var_name in ["z", "altitude", "elevation", "depth", "Band1"]:
+                if var_name in ds_xr.data_vars:
+                    z_var_name = var_name
+                    break
+
+            if z_var_name is None:
+                self.logger.warning("Could not find data variable in grid file")
+                return None
+
+            data_array = ds_xr[z_var_name]
+            total_count = data_array.size
+            
+            # For large grids (>10M cells), use sampling for speed
+            # For smaller grids, do full count
+            if total_count > 10_000_000:
+                self.logger.debug("Large grid detected (%d cells), using sampling", total_count)
+                
+                # Sample every Nth cell to estimate valid ratio
+                # Sample ~10,000 cells for good statistical accuracy
+                sample_interval = max(1, int(np.sqrt(total_count / 10000)))
+                
+                # Use strided indexing for fast sampling (no data loading until compute)
+                sample = data_array[::sample_interval, ::sample_interval]
+                sample_valid = int(sample.count().values)
+                sample_total = sample.size
+                
+                # Estimate total valid count from sample ratio
+                valid_ratio = sample_valid / sample_total if sample_total > 0 else 0
+                valid_count = int(total_count * valid_ratio)
+                
+                self.logger.debug(
+                    "Sampled %d of %d cells (every %dth cell), "
+                    "valid ratio: %.3f, estimated valid cells: %d",
+                    sample_total, total_count, sample_interval, valid_ratio, valid_count
+                )
+            else:
+                # For smaller grids, do full count
+                valid_count = int(data_array.count().values)
+
+        else:
+            # Fallback to manual chunking for netCDF4.Dataset
+            if "x" in ds.variables and "y" in ds.variables:
+                X, Y = "x", "y"
+            elif "lon" in ds.variables and "lat" in ds.variables:
+                X, Y = "lon", "lat"
+            else:
+                raise ValueError("Cannot find coordinate variables")
+
+            lon_size = len(ds[X])
+            lat_size = len(ds[Y])
+            lon_start = float(ds[X][0])
+            lon_end = float(ds[X][-1])
+            lat_start = float(ds[Y][0])
+            lat_end = float(ds[Y][-1])
+            lon_mid = float(ds[X][lon_size // 2])
+            lat_mid = float(ds[Y][lat_size // 2])
+
+            z_var = None
+            for var_name in ["z", "altitude", "elevation", "depth", "Band1"]:
+                if var_name in ds.variables:
+                    z_var = ds.variables[var_name]
+                    break
+
+            if z_var is None:
+                self.logger.warning("Could not find data variable in grid file")
+                return None
+
+            total_count = z_var.shape[0] * z_var.shape[1]
+            fill_value = getattr(z_var, "_FillValue", None)
+            
+            # Use sampling for large grids
+            if total_count > 10_000_000:
+                self.logger.debug("Large grid detected (%d cells), using sampling", total_count)
+                
+                # Sample every Nth row and column
+                sample_interval = max(1, int(np.sqrt(total_count / 10000)))
+                sample = z_var[::sample_interval, ::sample_interval]
+                
+                if hasattr(sample, "mask"):
+                    sample_valid = np.sum(~sample.mask)
                 else:
-                    valid_in_chunk -= np.sum(chunk == fill_value)
+                    sample_valid = np.sum(~np.isnan(sample))
+                
+                if fill_value is not None:
+                    if hasattr(sample, "mask"):
+                        sample_valid -= np.sum((~sample.mask) & (sample.data == fill_value))
+                    else:
+                        sample_valid -= np.sum(sample == fill_value)
+                
+                sample_total = sample.shape[0] * sample.shape[1]
+                valid_ratio = sample_valid / sample_total if sample_total > 0 else 0
+                valid_count = int(total_count * valid_ratio)
+                
+                self.logger.debug(
+                    "Sampled %d of %d cells (every %dth cell), "
+                    "valid ratio: %.3f, estimated valid cells: %d",
+                    sample_total, total_count, sample_interval, valid_ratio, valid_count
+                )
+            else:
+                # For smaller grids, process in chunks
+                chunk_size = 1000
+                valid_count = 0
 
-            valid_count += valid_in_chunk
+                for i in range(0, z_var.shape[0], chunk_size):
+                    end_i = min(i + chunk_size, z_var.shape[0])
+                    chunk = z_var[i:end_i, :]
+
+                    if hasattr(chunk, "mask"):
+                        valid_in_chunk = np.sum(~chunk.mask)
+                    else:
+                        valid_in_chunk = np.sum(~np.isnan(chunk))
+
+                    if fill_value is not None:
+                        if hasattr(chunk, "mask"):
+                            valid_in_chunk -= np.sum((~chunk.mask) & (chunk.data == fill_value))
+                        else:
+                            valid_in_chunk -= np.sum(chunk == fill_value)
+
+                    valid_count += valid_in_chunk
 
         self.logger.debug(
             "Grid has %d valid cells out of %d total cells (%.1f%%)",
@@ -462,6 +578,12 @@ class BaseLoader:
             utm_zone,
             hemisphere[0].upper(),
         )
+
+        # Cache the result
+        if filepath and os.path.exists(filepath):
+            file_mtime = os.path.getmtime(filepath)
+            cache_key = (filepath, file_mtime)
+            self._grid_area_cache[cache_key] = area_km2
 
         return area_km2
 
@@ -1361,7 +1483,7 @@ class BootStrapper(BaseLoader):
 
                 # Calculate area in square kilometers
                 try:
-                    area_km2 = self.calculate_grid_area(ds, grid_bounds)
+                    area_km2 = self.calculate_grid_area(ds, grid_bounds, filepath=fp)
                 except Exception as e:
                     self.logger.warning("Could not calculate area: %s", e)
                     area_km2 = None
