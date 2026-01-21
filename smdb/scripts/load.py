@@ -345,6 +345,7 @@ class BaseLoader:
     def calculate_grid_area(self, ds, grid_bounds: Polygon) -> float:
         """Calculate area in square kilometers for valid (non-NaN) grid cells.
         Reads the actual grid data and counts only cells with valid values.
+        Uses chunked processing to avoid loading entire dataset into memory.
         """
         import numpy as np
 
@@ -356,8 +357,15 @@ class BaseLoader:
         else:
             raise ValueError("Cannot find coordinate variables")
 
-        lon = ds[X][:]
-        lat = ds[Y][:]
+        # Only load coordinate endpoints and middle value for calculations
+        lon_size = len(ds[X])
+        lat_size = len(ds[Y])
+        lon_start = float(ds[X][0])
+        lon_end = float(ds[X][-1])
+        lat_start = float(ds[Y][0])
+        lat_end = float(ds[Y][-1])
+        lon_mid = float(ds[X][lon_size // 2])
+        lat_mid = float(ds[Y][lat_size // 2])
 
         # Get the grid data - try common variable names
         z_var = None
@@ -370,21 +378,35 @@ class BaseLoader:
             self.logger.warning("Could not find data variable in grid file")
             return None
 
-        # Get the data and identify valid cells
-        z_data = z_var[:]
+        # Process data in chunks to avoid loading everything into memory
+        chunk_size = 1000  # Process 1000 rows at a time
+        valid_count = 0
+        total_count = z_var.shape[0] * z_var.shape[1]
 
-        # Mask NaN and fill values
-        if hasattr(z_data, "mask"):
-            valid_mask = ~z_data.mask
-        else:
-            valid_mask = ~np.isnan(z_data)
+        fill_value = getattr(z_var, "_FillValue", None)
 
-        # Also check for fill values
-        if hasattr(z_var, "_FillValue"):
-            valid_mask &= z_data != z_var._FillValue
+        # Iterate over chunks
+        for i in range(0, z_var.shape[0], chunk_size):
+            end_i = min(i + chunk_size, z_var.shape[0])
+            chunk = z_var[i:end_i, :]
 
-        valid_count = np.sum(valid_mask)
-        total_count = z_data.size
+            # Count valid cells in this chunk
+            if hasattr(chunk, "mask"):
+                # Masked array
+                valid_in_chunk = np.sum(~chunk.mask)
+            else:
+                # Regular array - check for NaN
+                valid_in_chunk = np.sum(~np.isnan(chunk))
+
+            # Also check for fill values if present
+            if fill_value is not None:
+                if hasattr(chunk, "mask"):
+                    # For masked arrays, also exclude fill values in unmasked data
+                    valid_in_chunk -= np.sum((~chunk.mask) & (chunk.data == fill_value))
+                else:
+                    valid_in_chunk -= np.sum(chunk == fill_value)
+
+            valid_count += valid_in_chunk
 
         self.logger.debug(
             "Grid has %d valid cells out of %d total cells (%.1f%%)",
@@ -394,8 +416,8 @@ class BaseLoader:
         )
 
         # Calculate cell resolution (assuming uniform spacing)
-        dlon = float(np.abs(lon[1] - lon[0]))
-        dlat = float(np.abs(lat[1] - lat[0]))
+        dlon = float(np.abs(lon_end - lon_start) / (lon_size - 1))
+        dlat = float(np.abs(lat_end - lat_start) / (lat_size - 1))
 
         # Find appropriate UTM zone for accurate area calculation
         centroid = grid_bounds.centroid
@@ -405,8 +427,8 @@ class BaseLoader:
 
         # Calculate area of a single cell in the middle of the grid
         # (cells vary slightly in size with latitude, but this is close enough)
-        mid_lat = float(np.mean(lat))
-        mid_lon = float(np.mean(lon))
+        mid_lat = lat_mid
+        mid_lon = lon_mid
 
         # Create a cell polygon in geographic coordinates
         cell_poly = Polygon(
